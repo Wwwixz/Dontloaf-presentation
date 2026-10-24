@@ -5,25 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DontLoaf — защита проекта</title>
   <style>
-    /* ===========================================================
-       Deck framework — DO NOT EDIT the rules in this <style> block.
-       Edit only inside the second <style> block below (per-deck
-       styles) and inside <section class="slide"> bodies.
-
-       Contract this framework provides:
-         - 1920×1080 fixed canvas, scaled to fit the viewport
-         - Only .slide.active is visible at a time
-         - Programmatic prev/next + counter elements kept outside the scaled
-           stage but hidden by default so the host can render the UI chrome
-         - OD Deck Protocol v1 absolute navigation + slide-state events
-         - Keyboard (← → space PgUp PgDn Home End R), half-slide click, and stored
-           position survive iframe focus quirks
-         - "Save as PDF" produces a multi-page vertical PDF, one slide
-           per page, by toggling every slide visible under @media print
-       =========================================================== */
+    
     :root {
-      /* SLOT: theme tokens — the only top-level CSS the agent edits.
-         Add or override --bg / --fg / --accent / etc. here. */
+      
       --bg: #090b10;
       --fg: #f5f6fa;
       --muted: #a5aec0;
@@ -62,24 +46,12 @@
       inset: 0;
       overflow: hidden;
     }
-    /* Visibility toggle hardened with :not(.active) + !important so cascade
-       order can't break it. The previous `.slide { display:none }` rule
-       lost the cascade whenever a per-slide variant class (e.g.
-       `.s-cold { display:grid }`) was declared after it on the same
-       element — every slide silently became visible at once. The
-       `!important` is a belt-and-suspenders against agent code that adds
-       `!important` on variant classes too. */
+    
     .slide:not(.active) { display: none !important; }
-    /* The active default uses :where() so it has zero specificity. Per-slide
-       variant classes like `.s-cold { display:grid }` or
-       `.s-magazine { display:block }` can override the default flex layout
-       just by declaring `display` — no need for the variant to be more
-       specific. The hide rule above still wins for inactive slides. */
+    
     :where(.slide.active) { display: flex; flex-direction: column; }
 
-    /* Programmatic chrome — counter + prev/next live outside the scaled
-       stage so the host bridge can read/update them, but they stay hidden
-       in preview, presentation, fullscreen, and new-tab modes. */
+    
     .deck-counter {
       position: fixed;
       bottom: 22px;
@@ -132,8 +104,7 @@
       display: none;
     }
 
-    /* Print / PDF stitching — every slide stacks top-to-bottom, one per
-       page. The viewer's "Share → PDF" relies on this; do not remove. */
+    
     @media print {
       @page { size: 1920px 1080px; margin: 0; }
       html, body {
@@ -168,8 +139,8 @@
     }
   </style>
   <style>
-    /* SLOT: per-deck styles — typography, layout helpers, slide variants. */
-    /* OD-LAYOUT-PRIMITIVES v1 — structure only */
+    
+    
     @layer od-layout {
       :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile)>:where(*){min-width:0}
       .od-stack{display:flex;flex-direction:column;gap:var(--od-gap,8px)}.od-row{display:flex;align-items:center;gap:var(--od-gap,8px)}.od-row-top{display:flex;align-items:flex-start;gap:var(--od-gap,8px)}.od-cluster{display:flex;flex-wrap:wrap;align-items:center;gap:var(--od-gap,8px)}.od-fill{flex:1 1 0;min-width:0}.od-fixed{flex:none}.od-grid{display:grid;gap:var(--od-gap,12px);grid-template-columns:repeat(var(--od-cols,3),minmax(0,1fr))}
@@ -178,7 +149,7 @@
       .od-truncate{display:block;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.od-clamp-2,.od-clamp-3{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.od-clamp-2{-webkit-line-clamp:2}.od-clamp-3{-webkit-line-clamp:3}.od-lines-2{min-height:calc(2 * 1.4em)}.od-nowrap{white-space:nowrap}.od-keep{word-break:keep-all;overflow-wrap:anywhere}
       .od-screen{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:100%}.od-scroll{overflow-y:auto;overscroll-behavior:contain;min-height:0}.od-rail{display:flex;gap:var(--od-gap,8px);overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none;padding-inline:var(--od-rail-pad,16px);scroll-padding-inline:var(--od-rail-pad,16px)}.od-rail::-webkit-scrollbar{display:none}:where(.od-rail)>:where(*){flex:none;scroll-snap-align:start}:where(.od-rail)>:where(:last-child){margin-inline-end:var(--od-rail-pad,16px)}.od-spacer{flex:none;visibility:hidden;pointer-events:none}.od-touch{min-width:44px;min-height:44px}
     }
-    /* /OD-LAYOUT-PRIMITIVES v1 */
+    
     @font-face{font-family:Space Grotesk;src:url('presentation-assets/space-grotesk-latin-600-normal.woff2') format('woff2');font-style:normal;font-weight:600;font-display:swap}
     @font-face{font-family:Inter;src:url('presentation-assets/inter-latin-400-normal.woff2') format('woff2');font-style:normal;font-weight:400;font-display:swap}
     @font-face{font-family:Inter;src:url('presentation-assets/inter-latin-600-normal.woff2') format('woff2');font-style:normal;font-weight:600;font-display:swap}
@@ -216,7 +187,7 @@
   </style>
   <link rel="stylesheet" href="presentation-assets/cinematic.css?v=screencast-slide-1" />
   <style>
-    /* Slide 12: keep the player usable even when optional presentation assets are absent. */
+    
     .scene-screencast{display:grid;grid-template-columns:430px minmax(0,1fr);gap:54px;align-items:center}
     .screencast-copy h2{font-size:78px;max-width:520px}
     .screencast-copy p{font-size:27px;line-height:1.45;margin-top:34px;max-width:455px}
@@ -236,7 +207,7 @@
     .screencast-video[hidden],.screencast-empty[hidden]{display:none}
     .scene-opening .focus-object{display:grid;place-items:center;width:100%;height:100%;min-width:0;margin:0}
     .scene-opening .focus-sculpture{display:block;width:min(100%,720px);height:auto;overflow:visible;filter:drop-shadow(0 44px 34px rgba(0,0,0,.5))}
-    /* The viewer supplies its own navigation bar in an iframe. */
+    
     .embedded-view .s-screencast .deck-footer{visibility:hidden}
     @media print{.embedded-view .s-screencast .deck-footer{visibility:visible}}
   </style>
@@ -244,7 +215,7 @@
 <body>
   <div class="deck-shell">
     <div class="deck-stage" id="deck-stage">
-      <!-- SLOT: slides -->
+      
 
       <section class="slide active" data-screen-label="01 Начало">
         <div class="frame">
@@ -340,7 +311,7 @@
     </div>
   </div>
 
-  <!-- Framework chrome — DO NOT EDIT below this line. -->
+  
   <nav class="deck-counter" role="navigation" aria-label="Deck navigation">
     <button type="button" id="deck-prev" aria-label="Previous slide">‹</button>
     <span class="deck-count"><span id="deck-cur">01</span> <span class="total">/ <span id="deck-total">01</span></span></span>
@@ -398,15 +369,6 @@
       var total = document.getElementById('deck-total');
       var STORE = 'deck:idx:' + (location.pathname || '/');
       var idx = 0;
-
-      // ---- scale-to-fit ---------------------------------------------------
-      // The stage is 1920×1080 and sits at .deck-shell's (0, 0) in normal
-      // block flow — the shell is intentionally NOT a grid/flex container,
-      // so the stage's natural top-left is (0, 0). We scale via transform
-      // with transform-origin:top-left, then translate by the remainder to
-      // center the scaled box in the viewport. This survives nested
-      // transforms (e.g. when the OD viewer wraps the iframe in its own
-      // scale wrapper at zoom != 100%).
       function fit() {
         var sw = window.innerWidth;
         var sh = window.innerHeight;
@@ -417,8 +379,6 @@
         var ty = (sh - 1080 * s) / 2;
         stage.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + s + ')';
       }
-
-      // ---- navigation -----------------------------------------------------
       function pad2(n) { return (n < 10 ? '0' : '') + n; }
       function paint() {
         slides.forEach(function (el, i) { el.classList.toggle('active', i === idx); });
@@ -480,9 +440,6 @@
         else if (e.key === 'Home' || String(e.key).toLowerCase() === 'r') { e.__odDeckKeyHandled = true; e.preventDefault(); go(0); }
         else if (e.key === 'End') { e.__odDeckKeyHandled = true; e.preventDefault(); go(slides.length - 1); }
       }
-      // Capture phase + listen on both targets — inside the OD iframe,
-      // focus may be on window OR document; a single non-capture listener
-      // silently misses presses.
       window.addEventListener('keydown', onKey, true);
       document.addEventListener('keydown', onKey, true);
       if (prev) prev.addEventListener('click', function () { go(idx - 1); });
@@ -511,8 +468,6 @@
         if (e.clientX < window.innerWidth / 2) go(idx - 1);
         else go(idx + 1);
       }, true);
-
-      // Auto-focus body so arrow keys work without an initial click.
       document.body.setAttribute('tabindex', '-1');
       document.body.style.outline = 'none';
       function focusDeck() { try { window.focus(); document.body.focus({ preventScroll: true }); } catch (_) {} }
@@ -520,8 +475,6 @@
         if (!e.target.closest('button, input, video, a, select, textarea, [contenteditable]')) focusDeck();
       });
       window.addEventListener('load', focusDeck);
-
-      // Restore last position.
       try {
         var saved = parseInt(localStorage.getItem(STORE) || '0', 10);
         if (!isNaN(saved) && saved >= 0 && saved < slides.length) idx = saved;
