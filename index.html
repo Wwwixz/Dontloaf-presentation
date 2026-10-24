@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="ru" data-od-deck-protocol="1">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DontLoaf — защита проекта</title>
+  <style>
+    /* ===========================================================
+       Deck framework — DO NOT EDIT the rules in this <style> block.
+       Edit only inside the second <style> block below (per-deck
+       styles) and inside <section class="slide"> bodies.
+
+       Contract this framework provides:
+         - 1920×1080 fixed canvas, scaled to fit the viewport
+         - Only .slide.active is visible at a time
+         - Programmatic prev/next + counter elements kept outside the scaled
+           stage but hidden by default so the host can render the UI chrome
+         - OD Deck Protocol v1 absolute navigation + slide-state events
+         - Keyboard (← → space PgUp PgDn Home End R), half-slide click, and stored
+           position survive iframe focus quirks
+         - "Save as PDF" produces a multi-page vertical PDF, one slide
+           per page, by toggling every slide visible under @media print
+       =========================================================== */
+    :root {
+      /* SLOT: theme tokens — the only top-level CSS the agent edits.
+         Add or override --bg / --fg / --accent / etc. here. */
+      --bg: #090b10;
+      --fg: #f5f6fa;
+      --muted: #a5aec0;
+      --accent: #a78bfa;
+      --surface: #151922;
+      --shell: #05060a;
+      --blue: #6c8bff;
+      --line: #2a3040;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--shell);
+      color: var(--fg);
+      font: 18px/1.5 -apple-system, system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .deck-shell {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+    }
+    .deck-stage {
+      width: 1920px;
+      height: 1080px;
+      background: var(--bg);
+      position: relative;
+      transform-origin: top left;
+      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+    }
+    .slide {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+    /* Visibility toggle hardened with :not(.active) + !important so cascade
+       order can't break it. The previous `.slide { display:none }` rule
+       lost the cascade whenever a per-slide variant class (e.g.
+       `.s-cold { display:grid }`) was declared after it on the same
+       element — every slide silently became visible at once. The
+       `!important` is a belt-and-suspenders against agent code that adds
+       `!important` on variant classes too. */
+    .slide:not(.active) { display: none !important; }
+    /* The active default uses :where() so it has zero specificity. Per-slide
+       variant classes like `.s-cold { display:grid }` or
+       `.s-magazine { display:block }` can override the default flex layout
+       just by declaring `display` — no need for the variant to be more
+       specific. The hide rule above still wins for inactive slides. */
+    :where(.slide.active) { display: flex; flex-direction: column; }
+
+    /* Programmatic chrome — counter + prev/next live outside the scaled
+       stage so the host bridge can read/update them, but they stay hidden
+       in preview, presentation, fullscreen, and new-tab modes. */
+    .deck-counter {
+      position: fixed;
+      bottom: 22px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      align-items: center;
+      gap: 4px;
+      background: rgba(10, 14, 26, 0.92);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      padding: 6px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #fff;
+      font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.18em;
+      z-index: 1000;
+    }
+    .deck-counter button {
+      width: 36px; height: 36px;
+      background: transparent;
+      color: #fff;
+      border: 0;
+      border-radius: 50%;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: background 0.15s;
+    }
+    .deck-counter button:hover { background: rgba(255, 255, 255, 0.12); }
+    .deck-counter button[disabled] { opacity: 0.3; cursor: default; }
+    .deck-counter .deck-count {
+      padding: 0 14px;
+      letter-spacing: 0.22em;
+    }
+    .deck-counter .deck-count .total { color: rgba(255, 255, 255, 0.5); }
+    .deck-hint {
+      position: fixed;
+      bottom: 26px;
+      right: 28px;
+      color: rgba(255, 255, 255, 0.4);
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      z-index: 999;
+      pointer-events: none;
+      display: none;
+    }
+
+    /* Print / PDF stitching — every slide stacks top-to-bottom, one per
+       page. The viewer's "Share → PDF" relies on this; do not remove. */
+    @media print {
+      @page { size: 1920px 1080px; margin: 0; }
+      html, body {
+        width: 1920px !important;
+        height: auto !important;
+        overflow: visible !important;
+        background: #fff !important;
+      }
+      .deck-shell {
+        position: static !important;
+        display: block !important;
+        inset: auto !important;
+      }
+      .deck-stage {
+        width: 1920px !important;
+        height: auto !important;
+        transform: none !important;
+        box-shadow: none !important;
+        position: static !important;
+      }
+      .slide {
+        display: flex !important;
+        position: relative !important;
+        inset: auto !important;
+        width: 1920px !important;
+        height: 1080px !important;
+        page-break-after: always;
+        break-after: page;
+      }
+      .slide:last-child { page-break-after: auto; break-after: auto; }
+      .deck-counter, .deck-hint { display: none !important; }
+    }
+  </style>
+  <style>
+    /* SLOT: per-deck styles — typography, layout helpers, slide variants. */
+    /* OD-LAYOUT-PRIMITIVES v1 — structure only */
+    @layer od-layout {
+      :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile)>:where(*){min-width:0}
+      .od-stack{display:flex;flex-direction:column;gap:var(--od-gap,8px)}.od-row{display:flex;align-items:center;gap:var(--od-gap,8px)}.od-row-top{display:flex;align-items:flex-start;gap:var(--od-gap,8px)}.od-cluster{display:flex;flex-wrap:wrap;align-items:center;gap:var(--od-gap,8px)}.od-fill{flex:1 1 0;min-width:0}.od-fixed{flex:none}.od-grid{display:grid;gap:var(--od-gap,12px);grid-template-columns:repeat(var(--od-cols,3),minmax(0,1fr))}
+      .od-stat,.od-field,.od-cell{display:grid;gap:var(--od-gap,2px)}:where(.od-stat,.od-field,.od-cell)>:where(*){display:block}.od-tile{display:grid;grid-template-rows:auto 1fr}:where(.od-tile)>:where(*){display:block}
+      .od-media{display:block;width:100%;height:auto;aspect-ratio:var(--od-ratio,auto)}.od-media-cover{object-fit:cover}.od-icon{display:inline-block;inline-size:var(--od-icon-size,1em);block-size:var(--od-icon-size,1em);flex:none}
+      .od-truncate{display:block;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.od-clamp-2,.od-clamp-3{display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.od-clamp-2{-webkit-line-clamp:2}.od-clamp-3{-webkit-line-clamp:3}.od-lines-2{min-height:calc(2 * 1.4em)}.od-nowrap{white-space:nowrap}.od-keep{word-break:keep-all;overflow-wrap:anywhere}
+      .od-screen{display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:100%}.od-scroll{overflow-y:auto;overscroll-behavior:contain;min-height:0}.od-rail{display:flex;gap:var(--od-gap,8px);overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none;padding-inline:var(--od-rail-pad,16px);scroll-padding-inline:var(--od-rail-pad,16px)}.od-rail::-webkit-scrollbar{display:none}:where(.od-rail)>:where(*){flex:none;scroll-snap-align:start}:where(.od-rail)>:where(:last-child){margin-inline-end:var(--od-rail-pad,16px)}.od-spacer{flex:none;visibility:hidden;pointer-events:none}.od-touch{min-width:44px;min-height:44px}
+    }
+    /* /OD-LAYOUT-PRIMITIVES v1 */
+    @font-face{font-family:Space Grotesk;src:url('presentation-assets/space-grotesk-latin-600-normal.woff2') format('woff2');font-style:normal;font-weight:600;font-display:swap}
+    @font-face{font-family:Inter;src:url('presentation-assets/inter-latin-400-normal.woff2') format('woff2');font-style:normal;font-weight:400;font-display:swap}
+    @font-face{font-family:Inter;src:url('presentation-assets/inter-latin-600-normal.woff2') format('woff2');font-style:normal;font-weight:600;font-display:swap}
+    :root{--display:'Space Grotesk','Segoe UI',sans-serif;--body:Inter,'Segoe UI',sans-serif;--white:#f5f6fa;--soft:#a5aec0;--purple:#a78bfa;--electric:#6c8bff;--canvas:#090b10;--surface2:#151922;--edge:#2a3040;--ease:cubic-bezier(.22,1,.36,1)}
+    .frame{position:relative;isolation:isolate;display:grid;grid-template-rows:38px minmax(0,1fr) 54px;gap:30px;width:100%;height:100%;padding:76px 96px 52px;background:#090b10;color:var(--white);font:400 27px/1.43 var(--body);overflow:hidden}
+    .frame::before{content:"";position:absolute;inset:0;z-index:-2;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:96px 96px;mask-image:linear-gradient(to bottom,transparent,#000 25%,#000 85%,transparent);pointer-events:none}
+    .frame::after{content:"";position:absolute;inset:0;z-index:-1;box-shadow:inset 0 0 180px rgba(0,0,0,.28);pointer-events:none}
+    .topline,.deck-footer{display:flex;align-items:center;justify-content:space-between;gap:32px;min-width:0}
+    .topline{font:600 20px/1 var(--display);letter-spacing:.14em;text-transform:uppercase;color:#b9c2d3}
+    .brand-mini{display:flex;align-items:center;gap:16px;color:var(--white);letter-spacing:-.04em;text-transform:none;font-size:28px}
+    .brand-mark{display:flex;align-items:flex-end;gap:3px;transform:skew(-11deg)}.brand-mark i{display:block;width:9px;background:var(--purple);border-radius:2px}.brand-mark i:nth-child(1){height:15px}.brand-mark i:nth-child(2){height:24px}.brand-mark i:nth-child(3){height:32px;background:var(--electric)}
+    .section-id{display:flex;align-items:center;gap:18px;white-space:nowrap}.section-id::before{content:"";display:block;width:40px;height:1px;background:var(--purple)}
+    .scene{position:relative;min-height:0;min-width:0}.kicker{display:block;color:var(--purple);font:600 20px/1.2 var(--display);letter-spacing:.2em;text-transform:uppercase;margin-bottom:26px}
+    h1,h2,h3,p{margin:0}h1,h2,h3{font-family:var(--display);font-weight:600;letter-spacing:-.062em;line-height:1.02}h1{font-size:clamp(88px,7.3vw,140px)}h2{font-size:96px}h3{font-size:50px}p{max-width:870px;color:#b4bece}
+    em{font-style:normal;color:var(--purple)}.blue{color:var(--electric)}.muted{color:var(--soft)}.thin-rule{height:1px;background:#3a4152}
+    .deck-footer{font:600 18px/1 var(--display);letter-spacing:.08em;color:#a7afc0}
+    .progress-track{width:440px;height:3px;background:#363b49;overflow:hidden}.progress-fill{display:block;height:100%;background:var(--purple);transition:width 240ms var(--ease)}
+    .footer-left{display:flex;align-items:center;gap:28px}.footer-right{display:flex;align-items:center;gap:16px}.slide-count{min-width:88px;color:var(--white)}.slide-count span{color:#8e98aa}
+    .nav-btn{width:50px;height:42px;border:1px solid #515a6c;border-radius:10px;background:rgba(18,22,31,.88);color:var(--white);font:600 18px/1 var(--display);cursor:pointer;transition:background 200ms,color 200ms,border-color 200ms;pointer-events:auto}
+    .nav-btn:hover{background:#252b39;border-color:var(--purple)}.nav-btn:focus-visible{outline:3px solid var(--purple);outline-offset:3px}
+    .slide.active .reveal{animation:rise 650ms var(--ease) both}.slide.active .reveal.d2{animation-delay:110ms}.slide.active .reveal.d3{animation-delay:220ms}.slide.active .reveal.d4{animation-delay:320ms}@keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)}}
+    @media(prefers-reduced-motion:reduce){.slide.active .reveal,.slide.active .orbit,.slide.active .glint,.slide.active .graph-line{animation:none!important}.progress-fill,.nav-btn{transition:none}}
+    .scene-opening{display:grid;grid-template-columns:1.1fr .9fr;align-items:center}.opening-copy{z-index:2;max-width:1020px}.opening-copy h1{font-size:132px}.opening-copy p{font-size:34px;max-width:690px;margin-top:40px}.opening-note{margin-top:62px;color:#8d98ab;font:600 18px/1 var(--display);letter-spacing:.18em;text-transform:uppercase}.opening-orb{position:relative;width:650px;height:650px;margin:auto;perspective:1100px}.orb-core{position:absolute;inset:100px;border-radius:45%;transform:rotate(-20deg) rotateY(28deg);background:radial-gradient(circle at 30% 22%,#a793ed 0,#3b4183 24%,#171b32 58%,#05060c 78%);box-shadow:inset -35px -25px 60px #05060b,0 80px 120px #020308,0 0 95px rgba(108,139,255,.22)}.orb-core::after{content:"";position:absolute;inset:15%;border:2px solid rgba(195,181,255,.24);border-radius:50%;transform:rotateX(70deg) rotate(38deg)}.orbit{position:absolute;border:2px solid rgba(171,153,255,.55);border-radius:50%;transform:rotate(-28deg) rotateY(58deg);animation:orbit 12s linear infinite}.orbit.one{inset:36px 24px}.orbit.two{inset:72px 6px;transform:rotate(33deg) rotateY(57deg);border-color:rgba(108,139,255,.42);animation-duration:15s}.glint{position:absolute;left:70%;top:14%;width:10px;height:10px;border-radius:50%;background:#e3d9ff;box-shadow:0 0 35px 12px #8b73e8;animation:glint 3s ease-in-out infinite alternate}@keyframes orbit{50%{rotate:8deg}}@keyframes glint{to{opacity:.3;transform:scale(.5)}}
+    .scene-problem{display:grid;grid-template-columns:.88fr 1.12fr;gap:90px;align-items:center}.problem-head h2{font-size:112px}.problem-head p{font-size:32px;margin-top:40px}.problem-stack{height:680px;position:relative}.problem-stripe{position:absolute;display:flex;align-items:center;justify-content:space-between;padding:0 38px;height:130px;width:740px;border:1px solid #414755;background:#171b26;box-shadow:0 22px 55px rgba(0,0,0,.4);font:600 29px/1.2 var(--display)}.problem-stripe small{font:400 18px/1 var(--body);color:#8f9aac}.problem-stripe:nth-child(1){top:70px;left:30px;transform:rotate(-6deg)}.problem-stripe:nth-child(2){top:215px;left:0;transform:rotate(4deg)}.problem-stripe:nth-child(3){top:360px;left:62px;transform:rotate(-3deg)}.problem-stripe:nth-child(4){top:505px;left:16px;transform:rotate(5deg)}.problem-stripe i{width:27px;height:27px;border:2px solid #758099;border-radius:7px;flex:none;margin-right:22px}.problem-stripe b{display:flex;align-items:center}.problem-index{position:absolute;right:35px;top:0;color:#2d3344;font:600 380px/.8 var(--display);z-index:-1}
+    .scene-solution{display:grid;grid-template-columns:.8fr 1.2fr;align-items:center;gap:100px}.solution-copy h2{font-size:108px}.solution-copy p{font-size:32px;margin-top:42px}.system-map{position:relative;height:650px;border:1px solid #394253;background:radial-gradient(circle at 55% 46%,#191d2d,#0c0f16 61%);overflow:hidden}.system-map::before,.system-map::after{content:"";position:absolute;border:1px solid #3c4458;border-radius:50%;left:50%;top:50%;transform:translate(-50%,-50%)}.system-map::before{width:600px;height:600px}.system-map::after{width:420px;height:420px}.system-core{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:240px;height:240px;display:grid;place-items:center;border:1px solid #ada0ed;border-radius:50%;background:#1a1c34;box-shadow:0 0 90px rgba(167,139,250,.16);font:600 38px/1 var(--display)}.system-pill{position:absolute;padding:18px 28px;border:1px solid #5a6379;background:#1b202c;font:600 28px/1 var(--display);box-shadow:0 20px 40px #03040a}.system-pill.a{left:70px;top:135px}.system-pill.b{right:60px;top:145px}.system-pill.c{left:95px;bottom:115px}.system-pill.d{right:78px;bottom:130px}.system-pill::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--purple);margin-right:16px}
+    .scene-overview{display:grid;grid-template-columns:.42fr .58fr;gap:60px;align-items:center}.overview-copy h2{font-size:98px}.overview-copy p{font-size:29px;margin-top:38px}.mock-app{display:grid;grid-template-columns:205px 1fr;width:100%;height:590px;border:1px solid #4a5263;border-radius:20px;background:#0d1017;box-shadow:0 45px 100px #030408;overflow:hidden;transform:perspective(1200px) rotateY(-6deg) rotateX(2deg)}.mock-side{padding:28px 18px;background:#11151d;border-right:1px solid #2c3442;font:600 17px/1.2 var(--body)}.mock-logo{font:600 26px/1 var(--display);margin-bottom:48px}.mock-logo span{color:var(--purple)}.mock-nav{display:grid;gap:8px}.mock-nav span{display:block;padding:13px 14px;border-radius:7px;color:#a8b2c3}.mock-nav .selected{color:#e7ddff;background:#27233a}.mock-main{padding:42px 46px}.mock-kicker{font:600 13px/1 var(--display);letter-spacing:.17em;color:var(--purple)}.mock-title{font:600 48px/1 var(--display);letter-spacing:-.05em;margin:14px 0 10px}.mock-sub{font-size:19px;color:#aeb8c8}.mock-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:34px 0}.mock-summary div{padding:20px;background:#151a24;border:1px solid #2a3040;border-radius:9px}.mock-summary small,.mock-summary strong{display:block}.mock-summary small{font-size:13px;color:#a5aec0}.mock-summary strong{font:600 37px/1.1 var(--display);margin-top:10px}.mock-filters{display:flex;gap:8px;margin-bottom:18px;font-size:14px}.mock-filters span{padding:8px 12px;border-radius:6px;color:#98a4b8}.mock-filters .selected{background:#252b38;color:#f5f6fa}.mock-task{display:flex;align-items:center;gap:16px;padding:13px 0;border-bottom:1px solid #29303e;font-size:17px}.mock-check{width:20px;height:20px;border:1px solid #788398;border-radius:5px;flex:none}.mock-check.done{background:var(--purple);border-color:var(--purple)}.mock-task small{margin-left:auto;color:#a5aec0;font-size:14px}.mock-tag{padding:5px 8px;border:1px solid #495065;border-radius:50px;color:#b4bece;font-size:12px}
+    .scene-tasks{display:grid;grid-template-columns:.54fr .46fr;gap:64px;align-items:center}.task-story h2{font-size:106px}.task-story p{font-size:30px;margin-top:34px}.task-steps{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-top:54px}.task-steps div{border-top:1px solid #515a6c;padding:20px 0;font:600 23px/1.2 var(--display)}.task-steps span{display:block;color:var(--purple);font-size:18px;margin-bottom:13px}.editor-preview{height:650px;padding:46px;border:1px solid #4b5263;border-radius:18px;background:#151922;box-shadow:0 40px 90px #030409}.editor-preview .mock-title{margin-bottom:36px}.editor-field{margin-bottom:23px}.editor-field label{display:block;color:#afb8c8;font-size:16px;margin-bottom:8px}.editor-field strong{display:block;padding:15px 18px;border:1px solid #394154;border-radius:8px;background:#0e1118;font:400 19px/1.2 var(--body)}.editor-row{display:grid;grid-template-columns:1fr 1fr;gap:18px}.editor-tags{display:flex;gap:8px;margin-top:25px}.editor-tags span{padding:8px 14px;border:1px solid #5b4d82;border-radius:50px;background:#29243c;color:#d1c3ff;font-size:15px}.editor-save{display:inline-block;margin-top:35px;padding:13px 20px;background:var(--purple);border-radius:7px;color:#101019;font:600 17px/1 var(--body)}
+    .scene-tree{display:grid;grid-template-columns:.34fr .66fr;gap:58px;align-items:center}.tree-copy h2{font-size:98px}.tree-copy p{font-size:30px;margin-top:38px}.tree-note{margin-top:48px;padding-left:20px;border-left:2px solid var(--purple);font-size:21px;color:#aeb8c9}.tree-diagram{position:relative;height:700px;border:1px solid #394253;background:#0e111a;overflow:hidden}.tree-diagram svg{position:absolute;inset:0;width:100%;height:100%}.graph-line{stroke:#728be1;stroke-width:2;fill:none;stroke-dasharray:7 8;animation:draw 14s linear infinite}@keyframes draw{to{stroke-dashoffset:-120}}.tree-node{position:absolute;width:245px;padding:21px 24px;border:1px solid #5a657a;border-radius:11px;background:#1b2130;box-shadow:0 24px 45px #05070c;font:600 22px/1.1 var(--display)}.tree-node small{display:block;margin-top:9px;color:#a2adc1;font:400 16px/1.2 var(--body)}.tree-node.root{left:36px;top:309px;border-color:var(--purple);background:#2a2442}.tree-node.cat-one{left:350px;top:130px}.tree-node.cat-two{left:350px;top:420px}.tree-node.leaf-one{right:35px;top:72px}.tree-node.leaf-two{right:35px;top:238px}.tree-node.leaf-three{right:35px;top:450px}.tree-node.leaf-four{right:35px;top:580px}.tree-node.leaf{width:285px;border-color:#44506a;font-size:19px}.tree-node.leaf::after{content:"";position:absolute;right:18px;top:22px;width:9px;height:9px;border-radius:50%;background:var(--purple)}
+    .scene-notes{display:grid;grid-template-columns:.38fr .62fr;gap:50px;align-items:center}.notes-copy h2{font-size:98px}.notes-copy p{font-size:29px;margin-top:32px}.notes-copy .qualification{font-size:20px;margin-top:48px;color:#8f9baf}.notes-preview{position:relative;height:690px;display:grid;grid-template-columns:315px 1fr;border:1px solid #485166;border-radius:16px;background:#11151e;overflow:hidden;box-shadow:0 42px 90px #030408}.notes-list{border-right:1px solid #31394a;padding:34px 24px}.notes-list h3{font-size:23px;margin-bottom:30px}.notes-search{padding:13px 15px;border:1px solid #3a4558;border-radius:7px;color:#8793a8;font-size:17px;margin-bottom:24px}.notes-item{padding:18px 12px;border-bottom:1px solid #293140;font-size:19px}.notes-item.selected{background:#252338;border-radius:7px;border-color:transparent;color:#e4dcff}.notes-item small{display:block;color:#8894a7;font-size:14px;margin-top:8px}.notes-editor{padding:48px 55px}.notes-editor .mock-kicker{margin-bottom:38px}.notes-editor h3{font-size:52px}.notes-editor .note-date{font-size:17px;color:#8793a8;margin:20px 0 34px}.notes-editor p{font-size:25px;line-height:1.8;color:#c8d0dc}.notes-save{position:absolute;right:65px;bottom:65px;background:var(--purple);color:#101019;padding:13px 20px;border-radius:7px;font:600 17px/1 var(--body)}
+    .scene-analytics{display:grid;grid-template-columns:1fr .83fr;gap:50px;align-items:center}.analytics-copy h2{font-size:96px}.analytics-copy p{font-size:28px;margin-top:28px}.example-label{display:inline-block;margin-top:30px;padding:9px 14px;border:1px solid #645781;color:#d8caff;font:600 16px/1 var(--body);letter-spacing:.06em}.analytics-board{height:690px;display:grid;grid-template-rows:155px 1fr;gap:20px}.analytics-numbers{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.analytics-numbers div{padding:22px;border:1px solid #3d4658;background:#151922}.analytics-numbers small{display:block;color:#a2adbf;font-size:15px}.analytics-numbers strong{display:block;font:600 69px/1 var(--display);margin-top:12px}.analytics-panels{display:grid;grid-template-columns:1.3fr .7fr;gap:18px}.analytics-chart,.analytics-categories{padding:32px;border:1px solid #3d4658;background:#151922}.analytics-chart h3,.analytics-categories h3{font-size:28px;margin-bottom:26px}.chart{height:315px;display:flex;align-items:end;justify-content:space-around;gap:16px;border-bottom:1px solid #526075;padding:0 16px}.chart-col{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:8px;font-size:14px;color:#a8b5c8}.bar{width:36px;height:calc(var(--v) / var(--max) * 100%);max-height:245px;min-height:2px;background:#8d80d6;border-radius:6px 6px 0 0}.chart-col b{font-size:15px;color:#f5f6fa}.chart-col span{white-space:nowrap}.cat-line{margin-bottom:28px;font-size:17px}.cat-line div{display:flex;justify-content:space-between;gap:12px;margin-bottom:10px}.cat-line i{display:block;height:7px;width:calc(var(--v) / var(--max) * 100%);background:var(--purple);border-radius:10px}.cat-line:nth-of-type(even) i{background:var(--electric)}
+    .scene-ux{display:grid;grid-template-columns:.56fr .44fr;gap:74px;align-items:center}.ux-copy h2{font-size:105px}.ux-principles{display:grid;gap:20px;margin-top:50px}.ux-principles div{display:grid;grid-template-columns:68px 1fr;gap:20px;border-top:1px solid #495366;padding-top:18px}.ux-principles b{font:600 22px/1 var(--display);color:var(--purple)}.ux-principles span{font-size:27px}.ux-devices{position:relative;height:710px}.desktop-wire{position:absolute;left:0;top:55px;width:700px;height:455px;border:14px solid #373c4b;border-radius:20px;background:#10151e;box-shadow:0 45px 70px #020307}.desktop-wire::after{content:"";position:absolute;width:280px;height:24px;left:200px;bottom:-42px;background:#343a49;clip-path:polygon(25% 0,75% 0,100% 100%,0 100%)}.wire-side{width:120px;height:100%;background:#1c2230;padding:24px 18px;display:grid;align-content:start;gap:18px}.wire-side i{height:9px;border-radius:4px;background:#59647a}.wire-main{position:absolute;left:160px;top:45px;right:35px}.wire-main h3{font-size:37px;margin-bottom:22px}.wire-main span{display:block;height:42px;background:#232b3a;border-radius:7px;margin-top:13px}.wire-main span:nth-of-type(2){width:85%}.wire-main span:nth-of-type(3){width:93%}.phone-wire{position:absolute;right:0;bottom:20px;width:265px;height:500px;border:14px solid #535a69;border-radius:46px;background:#10151d;box-shadow:0 40px 70px #020307;transform:rotate(6deg)}.phone-wire::before{content:"";position:absolute;top:8px;left:90px;width:56px;height:14px;background:#05070b;border-radius:12px}.phone-inner{padding:70px 18px 20px}.phone-inner h3{font-size:28px;margin-bottom:22px}.phone-inner i{display:block;height:50px;background:#242b39;border-radius:8px;margin-bottom:12px}.phone-inner i:nth-child(3){width:80%}.ux-caption{position:absolute;right:0;top:0;font:600 18px/1 var(--display);color:#8e9ab0;letter-spacing:.14em}
+    .scene-tech{display:grid;grid-template-columns:.34fr .66fr;gap:48px;align-items:center}.tech-copy h2{font-size:100px}.tech-copy p{font-size:27px;margin-top:32px}.architecture{display:grid;grid-template-columns:1fr 64px 1fr 64px 1fr;align-items:center;gap:0}.arch-node{min-height:415px;padding:38px 25px;border:1px solid #4b5265;background:#151a25}.arch-node:nth-of-type(1){border-top:5px solid var(--purple)}.arch-node:nth-of-type(3){border-top:5px solid var(--electric)}.arch-node:nth-of-type(5){border-top:5px solid #a0acdc}.arch-node small{font:600 17px/1 var(--display);letter-spacing:.13em;color:var(--purple)}.arch-node h3{font-size:42px;margin:23px 0 30px}.arch-node p{font-size:21px;line-height:1.45}.arch-node ul{list-style:none;margin-top:25px;color:#b7c1d0;font-size:18px}.arch-node li{padding:9px 0;border-top:1px solid #343c4d}.arch-arrow{text-align:center;font:600 46px/1 var(--display);color:var(--purple)}.arch-foot{grid-column:1/-1;margin-top:28px;font-size:19px;color:#aab5c8}
+    .scene-value{display:grid;grid-template-columns:1fr 1fr;gap:42px;align-items:center}.value-col{height:690px;padding:42px 46px;border:1px solid #485064;background:#151923}.value-col.planned{background:#10141c;border-color:#333b49}.value-col h2{font-size:70px;margin-bottom:30px}.value-col .kicker{margin-bottom:18px}.value-col ul{list-style:none;display:grid;gap:16px}.value-col li{display:flex;gap:18px;font:400 23px/1.25 var(--body)}.value-col li::before{content:"";width:12px;height:12px;border-radius:50%;background:var(--purple);flex:none;margin-top:9px}.value-col.planned li::before{border:2px solid var(--electric);background:transparent}.planned-tag{display:inline-block;margin-top:28px;color:#a7b2c5;font-size:18px}
+    .scene-final{display:grid;grid-template-columns:1fr .45fr;align-items:center;gap:55px}.final-copy h2{font-size:134px;max-width:1230px}.final-copy p{font-size:38px;margin-top:40px;max-width:820px}.final-brand{font:600 58px/1 var(--display);letter-spacing:-.06em;margin-top:72px}.final-brand span{color:var(--purple)}.final-symbol{width:480px;height:480px;position:relative;transform:rotate(-15deg);filter:drop-shadow(0 70px 50px #020308)}.final-symbol i{position:absolute;bottom:40px;display:block;width:100px;border-radius:20px;background:linear-gradient(130deg,#d5c9ff 0,#8873e1 25%,#282e67 78%,#101324);box-shadow:inset -16px 0 20px #171a40,20px 20px 30px #02040a}.final-symbol i:nth-child(1){left:50px;height:230px}.final-symbol i:nth-child(2){left:190px;height:330px}.final-symbol i:nth-child(3){left:330px;height:430px;background:linear-gradient(130deg,#b7c7ff,#6c8bff 35%,#172861 85%)}
+  </style>
+  <link rel="stylesheet" href="presentation-assets/cinematic.css?v=screencast-slide-1" />
+  <style>
+    /* Slide 12: keep the player usable even when optional presentation assets are absent. */
+    .scene-screencast{display:grid;grid-template-columns:430px minmax(0,1fr);gap:54px;align-items:center}
+    .screencast-copy h2{font-size:78px;max-width:520px}
+    .screencast-copy p{font-size:27px;line-height:1.45;margin-top:34px;max-width:455px}
+    .screencast-action{display:flex;flex-direction:column;align-items:flex-start;gap:18px;margin-top:50px}
+    .screencast-pick{padding:17px 25px;border:0;border-radius:8px;background:var(--purple);color:#11121a;font:600 20px/1 var(--body);cursor:pointer}
+    .screencast-pick:hover{background:#c0aaff}
+    .screencast-pick:focus-visible{outline:3px solid #fff;outline-offset:4px}
+    .screencast-hint,.screencast-status{color:#b4bece;font:400 18px/1.4 var(--body)}
+    .screencast-status{margin-top:18px;overflow-wrap:anywhere}
+    .screencast-status:empty{display:none}
+    .screencast-stage{position:relative;display:grid;place-items:center;width:100%;aspect-ratio:16/9;min-height:0;overflow:hidden;border:1px solid #414a5e;background:#07090e;box-shadow:0 35px 80px rgba(0,0,0,.4)}
+    .screencast-empty{display:flex;flex-direction:column;align-items:center;gap:16px;padding:48px;text-align:center;color:#aeb8c9;font-size:22px}
+    .screencast-empty strong{color:var(--white);font:600 32px/1.2 var(--display)}
+    .screencast-play{display:grid;place-items:center;width:90px;height:90px;margin-bottom:12px;border:1px solid #66568c;border-radius:50%;background:#211b35}
+    .screencast-play::before{content:"";border-top:17px solid transparent;border-bottom:17px solid transparent;border-left:25px solid var(--purple);margin-left:7px}
+    .screencast-video{display:block;width:100%;height:100%;object-fit:contain;background:#000}
+    .screencast-video[hidden],.screencast-empty[hidden]{display:none}
+    /* The viewer supplies its own navigation bar in an iframe. */
+    .embedded-view .s-screencast .deck-footer{visibility:hidden}
+    @media print{.embedded-view .s-screencast .deck-footer{visibility:visible}}
+  </style>
+</head>
+<body>
+  <div class="deck-shell">
+    <div class="deck-stage" id="deck-stage">
+      <!-- SLOT: slides -->
+
+      <section class="slide active" data-screen-label="01 Начало">
+        <div class="frame">
+          <header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Защита проекта / 2026</span></header>
+          <main class="scene scene-opening"><div class="opening-copy"><span class="kicker reveal">Продуктивность без шума</span><h1 class="reveal d2">Вернуть фокус.<br><em>Довести до дела.</em></h1><p class="reveal d3">Единое пространство для задач, заметок и осмысленного прогресса.</p><div class="opening-note reveal d4">DontLoaf — от намерения к действию</div></div><figure class="focus-object" aria-label="Металлическая скульптура: три связанные ступени целей внутри пространственных рам"><div class="sculpture-fallback" aria-hidden="true"><div class="sculpture-rails"></div><div class="sculpture-steps"><i></i><i></i><i></i></div></div></figure></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">01 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:7.692%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="02 Проблема">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Проблема</span></header>
+          <main class="scene scene-problem"><div class="problem-head"><span class="kicker reveal">Когда дел много</span><h2 class="reveal d2">Сложно увидеть <em>главное.</em></h2><p class="reveal d3">Списки растут, идеи теряются, а прогресс остаётся невидимым. Перегрузка превращает выбор следующего шага в отдельную задачу.</p></div><div class="problem-stack" aria-hidden="true"><div class="problem-index">?</div><div class="problem-stripe"><b><i></i>Срочно закончить проект</b><small>Сегодня</small></div><div class="problem-stripe"><b><i></i>Не забыть идею</b><small>Когда-нибудь</small></div><div class="problem-stripe"><b><i></i>Разобрать дела</b><small>Нет контекста</small></div><div class="problem-stripe"><b><i></i>Понять, что сделано</b><small>Где посмотреть?</small></div></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">02 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:15.385%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="03 Решение">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Решение</span></header>
+          <main class="scene scene-solution"><div class="solution-copy"><span class="kicker reveal">Одна ясная система</span><h2 class="reveal d2">Место, где <em>мысль</em> становится действием.</h2><p class="reveal d3">DontLoaf объединяет планирование, контекст и обратную связь о результате в одном рабочем пространстве.</p></div><div class="system-map reveal d3"><div class="system-core">DontLoaf</div><div class="system-pill a">Задачи</div><div class="system-pill b">Карта</div><div class="system-pill c">Заметки</div><div class="system-pill d">Прогресс</div></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">03 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:23.077%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="04 Обзор продукта">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Продукт</span></header>
+          <main class="scene scene-overview"><div class="overview-copy"><span class="kicker reveal">Рабочее пространство</span><h2 class="reveal d2">Всё важное <em>перед глазами.</em></h2><p class="reveal d3">Слева — постоянная навигация. В центре — задачи и состояние выбранного периода. Интерфейсный пример повторяет структуру реального приложения.</p></div><div class="mock-app reveal d3" role="img" aria-label="Точное интерфейсное превью раздела задач DontLoaf на основе компонентов приложения"><aside class="mock-side"><div class="mock-logo">DontLoaf<span>.</span></div><div class="mock-nav"><span class="selected">Все задачи</span><span>Дерево задач</span><span>Заметки</span><span>Аналитика</span><span>Профиль</span></div></aside><div class="mock-main"><div class="mock-kicker">РАБОЧЕЕ ПРОСТРАНСТВО / 01</div><div class="mock-title">Ваши задачи.</div><div class="mock-sub">Главное — в фокусе. Остальное — на своём месте.</div><div class="mock-summary"><div><small>ВСЕГО ЗАДАЧ</small><strong>7</strong></div><div><small>ВЫПОЛНЕНО</small><strong>4</strong></div><div><small>ВАШ ПРОГРЕСС</small><strong>57%</strong></div></div><div class="mock-filters"><span class="selected">Все</span><span>Сегодня</span><span>Неделя</span><span>Месяц</span></div><div class="mock-task"><i class="mock-check done"></i>Сделать ДЗ по математике <small>Учёба</small></div><div class="mock-task"><i class="mock-check"></i>Пробежка 5 км <small>Здоровье</small></div><div class="mock-task"><i class="mock-check"></i>Изучить React <small>Проекты</small></div></div></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">04 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:30.769%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="05 Управление задачами">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Задачи</span></header>
+          <main class="scene scene-tasks"><div class="task-story"><span class="kicker reveal">От идеи до галочки</span><h2 class="reveal d2">Следующий шаг <em>конкретен.</em></h2><p class="reveal d3">Задачу можно создать, уточнить, найти, отфильтровать по периоду и отметить выполненной.</p><div class="task-steps reveal d4"><div><span>01</span>Название и описание</div><div><span>02</span>Категория и приоритет</div><div><span>03</span>Срок и теги</div><div><span>04</span>Статус выполнения</div></div></div><div class="editor-preview reveal d3" role="img" aria-label="Превью редактора задачи DontLoaf"><div class="mock-kicker">ЗАДАЧИ / РЕДАКТОР</div><div class="mock-title">Новая задача.</div><div class="editor-field"><label>Название</label><strong>Пробежка 5 км</strong></div><div class="editor-row"><div class="editor-field"><label>Категория</label><strong>Здоровье</strong></div><div class="editor-field"><label>Приоритет</label><strong>Средний</strong></div></div><div class="editor-field"><label>Срок</label><strong>Завтра</strong></div><div class="editor-tags"><span>спорт</span><span>личное</span></div><span class="editor-save">Сохранить задачу</span></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">05 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:38.462%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="06 Дерево задач">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Карта задач</span></header>
+          <main class="scene scene-tree"><div class="tree-copy"><span class="kicker reveal">Визуальная структура</span><h2 class="reveal d2">Видеть <em>картину</em> целиком.</h2><p class="reveal d3">Карта показывает период, направления и отдельные задачи. Категории можно раскрывать и сворачивать, карту — двигать и масштабировать.</p><div class="tree-note reveal d4">В текущей модели это группировка по категориям, а не произвольные подзадачи.</div></div><div class="tree-diagram reveal d3" role="img" aria-label="Анимированная схема: все задачи, категории Работа и Саморазвитие, задачи каждой категории"><svg viewBox="0 0 980 700" preserveAspectRatio="none" aria-hidden="true"><path class="graph-line" d="M281 347 C320 347 312 170 350 170 M281 347 C320 347 312 460 350 460 M595 170 C650 170 640 112 660 112 M595 170 C650 170 640 278 660 278 M595 460 C650 460 640 490 660 490"/></svg><div class="tree-node root">Все задачи<small>7 в демонаборе</small></div><div class="tree-node cat-one">Работа<small>Категория</small></div><div class="tree-node cat-two">Саморазвитие<small>Категория</small></div><div class="tree-node leaf leaf-one">Разобрать почту<small>В работе</small></div><div class="tree-node leaf leaf-two">Написать отчёт<small>Выполнено</small></div><div class="tree-node leaf leaf-three">Прочитать книгу<small>Выполнено</small></div></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">06 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:46.154%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="07 Заметки">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Заметки</span></header>
+          <main class="scene scene-notes"><div class="notes-copy"><span class="kicker reveal">Идеи и контекст</span><h2 class="reveal d2">Мысли не должны <em>теряться.</em></h2><p class="reveal d3">Раздел заметок даёт библиотеку, поиск по названию и редактор для сохранения текста.</p><p class="qualification reveal d4">В коде это собственный раздел DontLoaf. Синхронизация с Obsidian и связи между заметками не реализованы.</p></div><div class="notes-preview reveal d3" role="img" aria-label="Превью раздела заметок DontLoaf по существующему интерфейсу"><aside class="notes-list"><h3>ВАША БИБЛИОТЕКА</h3><div class="notes-search">Поиск по названию</div><div class="notes-item selected">Планы на месяц<small>Обновлено сегодня</small></div><div class="notes-item">Идеи для проекта<small>Недавно</small></div></aside><div class="notes-editor"><div class="mock-kicker">РАБОЧИЙ ЛИСТ</div><h3>Планы на месяц</h3><div class="note-date">Демонстрационная заметка</div><p>1. Закончить проект<br>2. Прочитать книгу<br>3. Разобраться с React</p><span class="notes-save">Сохранить</span></div></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">07 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:53.846%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="08 Аналитика">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Аналитика</span></header>
+          <main class="scene scene-analytics"><div class="analytics-copy"><span class="kicker reveal">Прогресс виден</span><h2 class="reveal d2">Действие становится <em>результатом.</em></h2><p class="reveal d3">Приложение считает выполненные задачи, долю завершения, распределение по категориям и динамику за семь дней.</p><span class="example-label reveal d4">Иллюстрация на основе seed.py · 7 задач / 4 выполнено</span></div><div class="analytics-board reveal d3" role="img" aria-label="Иллюстративная аналитика по демонстрационным данным: 7 задач, 4 выполнено, 57,1 процента"><div class="analytics-numbers"><div><small>ВСЕГО ЗАДАЧ</small><strong>7</strong></div><div><small>ВЫПОЛНЕНО</small><strong>4</strong></div><div><small>ДОЛЯ ЗАВЕРШЕНИЯ</small><strong>57,1%</strong></div></div><div class="analytics-panels"><div class="analytics-chart"><h3>Ритм / 7 дней</h3><div class="chart" style="--max:2"><div class="chart-col"><b>0</b><i class="bar" style="--v:0"></i><span>Д−6</span></div><div class="chart-col"><b>0</b><i class="bar" style="--v:0"></i><span>Д−5</span></div><div class="chart-col"><b>0</b><i class="bar" style="--v:0"></i><span>Д−4</span></div><div class="chart-col"><b>0</b><i class="bar" style="--v:0"></i><span>Д−3</span></div><div class="chart-col"><b>1</b><i class="bar" style="--v:1"></i><span>Д−2</span></div><div class="chart-col"><b>1</b><i class="bar" style="--v:1"></i><span>Вчера</span></div><div class="chart-col"><b>2</b><i class="bar" style="--v:2"></i><span>Сегодня</span></div></div></div><div class="analytics-categories"><h3>Категории</h3><div class="cat-line"><div><span>Работа</span><span>3 / 7</span></div><i style="--v:3;--max:7"></i></div><div class="cat-line"><div><span>Учёба</span><span>1 / 7</span></div><i style="--v:1;--max:7"></i></div><div class="cat-line"><div><span>Саморазвитие</span><span>1 / 7</span></div><i style="--v:1;--max:7"></i></div><div class="cat-line"><div><span>Здоровье</span><span>1 / 7</span></div><i style="--v:1;--max:7"></i></div><div class="cat-line"><div><span>Проекты</span><span>1 / 7</span></div><i style="--v:1;--max:7"></i></div></div></div></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">08 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:61.538%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="09 Пользовательский опыт">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Опыт</span></header>
+          <main class="scene scene-ux"><div class="ux-copy"><span class="kicker reveal">Дизайн для действия</span><h2 class="reveal d2">Меньше трения. <em>Больше ясности.</em></h2><div class="ux-principles reveal d3"><div><b>01</b><span>Постоянная навигация между ключевыми разделами</span></div><div><b>02</b><span>Состояния загрузки, ошибки и пустых данных</span></div><div><b>03</b><span>Адаптация интерфейса для мобильного экрана</span></div><div><b>04</b><span>Клавиатура, фокус и настройки анимации</span></div></div></div><div class="ux-devices reveal d3" aria-hidden="true"><span class="ux-caption">ОДИН ПРОДУКТ / РАЗНЫЕ ЭКРАНЫ</span><div class="desktop-wire"><div class="wire-side"><i></i><i></i><i></i><i></i></div><div class="wire-main"><h3>Ваши задачи.</h3><span></span><span></span><span></span></div></div><div class="phone-wire"><div class="phone-inner"><h3>Ваши задачи.</h3><i></i><i></i><i></i><i></i></div></div></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">09 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:69.231%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="10 Технологии">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Архитектура</span></header>
+          <main class="scene scene-tech"><div class="tech-copy"><span class="kicker reveal">Под капотом</span><h2 class="reveal d2">Система с <em>реальными данными.</em></h2><p class="reveal d3">Фронтенд обращается к защищённому API; сервер хранит пользовательские задачи, теги и заметки в PostgreSQL.</p></div><div class="architecture reveal d3"><div class="arch-node"><small>ФРОНТЕНД</small><h3>Astro<br>+ React</h3><p>Страницы и интерактивные компоненты</p><ul><li>TypeScript</li><li>Tailwind CSS</li><li>Motion / Three.js</li></ul></div><div class="arch-arrow">→</div><div class="arch-node"><small>API</small><h3>FastAPI</h3><p>Аутентификация, бизнес-логика и ответы клиенту</p><ul><li>JWT</li><li>Pydantic</li><li>Uvicorn</li></ul></div><div class="arch-arrow">→</div><div class="arch-node"><small>ДАННЫЕ</small><h3>PostgreSQL</h3><p>Пользователи, задачи, теги и заметки</p><ul><li>SQLAlchemy</li><li>Alembic</li><li>Миграции</li></ul></div><div class="arch-foot">Маршрут запроса: React-компонент → /api → FastAPI → SQLAlchemy → PostgreSQL</div></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">10 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:76.923%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="11 Ценность и развитие">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Ценность и развитие</span></header>
+          <main class="scene scene-value"><div class="value-col reveal"><span class="kicker">Уже работает</span><h2>Ценность <em>сегодня.</em></h2><ul><li>Задачи и заметки в одном рабочем пространстве</li><li>Категории, сроки, приоритеты и поиск</li><li>Визуальная карта направлений и задач</li><li>Аналитика на основе пользовательских данных</li></ul></div><div class="value-col planned reveal d2"><span class="kicker blue">Возможности развития</span><h2>Следующий <span class="blue">уровень.</span></h2><ul><li>Настоящие подзадачи и зависимости</li><li>Связи между заметками и задачами</li><li>Интеграция с внешними базами знаний</li><li>Совместная работа и напоминания</li></ul><span class="planned-tag">Планы, не реализованные функции</span></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">11 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:84.615%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide s-screencast" data-screen-label="12 Скринкаст">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Демонстрация</span></header>
+          <main class="scene scene-screencast"><div class="screencast-copy"><span class="kicker reveal">Продукт в действии</span><h2 class="reveal d2">Покажем <em>DontLoaf.</em></h2><p class="reveal d3">Здесь можно воспроизвести готовый скринкаст приложения во время защиты.</p><div class="screencast-action reveal d4"><button class="screencast-pick" type="button">Выбрать видео</button><input class="screencast-file" type="file" accept="video/mp4,video/webm,video/ogg,video/quicktime" hidden><span class="screencast-hint">MP4 или WebM · файл остаётся на вашем устройстве</span></div><p class="screencast-status" role="status" aria-live="polite"></p></div><div class="screencast-stage reveal d3"><div class="screencast-empty"><span class="screencast-play" aria-hidden="true"></span><strong>Место для скринкаста</strong><span>Выберите готовое видео, чтобы показать работу приложения.</span></div><video class="screencast-video" controls playsinline preload="metadata" aria-label="Воспроизведение скринкаста DontLoaf" hidden></video></div></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">12 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:92.308%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="Следующий слайд" onclick="document.getElementById('deck-next').click()">→</button></div></footer>
+        </div>
+      </section>
+
+      <section class="slide" data-screen-label="13 Финал">
+        <div class="frame"><header class="topline"><span class="brand-mini"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>DontLoaf</span><span class="section-id">Финал</span></header>
+          <main class="scene scene-final"><div class="final-copy"><span class="kicker reveal">От замысла к результату</span><h2 class="reveal d2">Не откладывать жизнь <em>на потом.</em></h2><p class="reveal d3">Собрать мысли. Выбрать главное. Сделать следующий шаг.</p><div class="final-brand reveal d4">DontLoaf<span>.</span></div></div><figure class="focus-object focus-object--final" aria-label="Три ступени DontLoaf: от замысла к результату"><div class="sculpture-fallback" aria-hidden="true"><div class="sculpture-rails"></div><div class="sculpture-steps"><i></i><i></i><i></i></div></div></figure></main>
+          <footer class="deck-footer"><div class="footer-left"><span class="slide-count">13 <span>/ 13</span></span><div class="progress-track"><span class="progress-fill" style="width:100%"></span></div></div><div class="footer-right"><button class="nav-btn" type="button" aria-label="Предыдущий слайд" onclick="document.getElementById('deck-prev').click()">←</button><button class="nav-btn" type="button" aria-label="К первому слайду" onclick="window.dispatchEvent(new KeyboardEvent('keydown',{key:'r',bubbles:true}))">↺</button></div></footer>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Framework chrome — DO NOT EDIT below this line. -->
+  <nav class="deck-counter" role="navigation" aria-label="Deck navigation">
+    <button type="button" id="deck-prev" aria-label="Previous slide">‹</button>
+    <span class="deck-count"><span id="deck-cur">01</span> <span class="total">/ <span id="deck-total">01</span></span></span>
+    <button type="button" id="deck-next" aria-label="Next slide">›</button>
+  </nav>
+  <div class="deck-hint">← / → · space · R reset</div>
+
+  <script src="presentation-assets/cinematic.min.js?v=screencast-slide-1"></script>
+  <script>
+    (function () {
+      if (window.parent !== window) document.documentElement.classList.add('embedded-view');
+      var slide = document.querySelector('.scene-screencast');
+      if (!slide) return;
+      var pick = slide.querySelector('.screencast-pick');
+      var input = slide.querySelector('.screencast-file');
+      var video = slide.querySelector('.screencast-video');
+      var empty = slide.querySelector('.screencast-empty');
+      var status = slide.querySelector('.screencast-status');
+      var videoUrl = null;
+
+      pick.addEventListener('click', function () { input.click(); });
+      input.addEventListener('change', function () {
+        var file = input.files && input.files[0];
+        if (!file) return;
+        if (!/^video\//.test(file.type) && !/\.(mp4|webm|ogg|ogv|mov)$/i.test(file.name)) {
+          status.textContent = 'Выберите видеофайл MP4 или WebM.';
+          input.value = '';
+          return;
+        }
+        video.pause();
+        if (videoUrl) URL.revokeObjectURL(videoUrl);
+        videoUrl = URL.createObjectURL(file);
+        video.src = videoUrl;
+        video.hidden = false;
+        empty.hidden = true;
+        status.textContent = 'Загружено: ' + file.name;
+        video.load();
+        input.value = '';
+      });
+      video.addEventListener('error', function () {
+        status.textContent = 'Не удалось воспроизвести видео. Попробуйте MP4 или WebM.';
+      });
+      window.addEventListener('beforeunload', function () {
+        if (videoUrl) URL.revokeObjectURL(videoUrl);
+      });
+    })();
+  </script>
+  <script>
+    (function () {
+      var stage = document.getElementById('deck-stage');
+      var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+      var prev = document.getElementById('deck-prev');
+      var next = document.getElementById('deck-next');
+      var cur = document.getElementById('deck-cur');
+      var total = document.getElementById('deck-total');
+      var STORE = 'deck:idx:' + (location.pathname || '/');
+      var idx = 0;
+
+      // ---- scale-to-fit ---------------------------------------------------
+      // The stage is 1920×1080 and sits at .deck-shell's (0, 0) in normal
+      // block flow — the shell is intentionally NOT a grid/flex container,
+      // so the stage's natural top-left is (0, 0). We scale via transform
+      // with transform-origin:top-left, then translate by the remainder to
+      // center the scaled box in the viewport. This survives nested
+      // transforms (e.g. when the OD viewer wraps the iframe in its own
+      // scale wrapper at zoom != 100%).
+      function fit() {
+        var sw = window.innerWidth;
+        var sh = window.innerHeight;
+        var pad = 32;
+        var s = Math.min((sw - pad) / 1920, (sh - pad) / 1080);
+        if (!isFinite(s) || s <= 0) s = 1;
+        var tx = (sw - 1920 * s) / 2;
+        var ty = (sh - 1080 * s) / 2;
+        stage.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + s + ')';
+      }
+
+      // ---- navigation -----------------------------------------------------
+      function pad2(n) { return (n < 10 ? '0' : '') + n; }
+      function paint() {
+        slides.forEach(function (el, i) { el.classList.toggle('active', i === idx); });
+        var screencastVideo = document.querySelector('.screencast-video');
+        if (screencastVideo && !screencastVideo.closest('.slide').classList.contains('active') && !screencastVideo.paused) screencastVideo.pause();
+        if (cur) cur.textContent = pad2(idx + 1);
+        if (total) total.textContent = pad2(slides.length);
+        if (prev) prev.toggleAttribute('disabled', idx <= 0);
+        if (next) next.toggleAttribute('disabled', idx >= slides.length - 1);
+        postDeckState();
+      }
+      function go(i) {
+        idx = Math.max(0, Math.min(slides.length - 1, i));
+        paint();
+        try { localStorage.setItem(STORE, String(idx)); } catch (_) {}
+      }
+      var OD_DECK_PROTOCOL_VERSION = 1;
+      function postDeckState() {
+        try {
+          window.parent.postMessage({
+            type: 'od:slide-state',
+            protocolVersion: OD_DECK_PROTOCOL_VERSION,
+            active: idx,
+            count: slides.length
+          }, '*');
+        } catch (_) {}
+      }
+      function announceDeckProtocol() {
+        try {
+          window.parent.postMessage({
+            type: 'od:deck-ready',
+            protocolVersion: OD_DECK_PROTOCOL_VERSION,
+            capabilities: ["absolute-navigation","state-events"]
+          }, '*');
+        } catch (_) {}
+      }
+      window.addEventListener('message', function (event) {
+        var data = event && event.data;
+        if (!data || data.type !== 'od:slide') return;
+        if (data.protocolVersion != null && data.protocolVersion !== OD_DECK_PROTOCOL_VERSION) return;
+        var target = idx;
+        if (data.action === 'go') {
+          if (typeof data.index !== 'number' || !isFinite(data.index)) return;
+          target = Math.floor(data.index);
+        } else if (data.action === 'next') target = idx + 1;
+        else if (data.action === 'prev') target = idx - 1;
+        else if (data.action === 'first') target = 0;
+        else if (data.action === 'last') target = slides.length - 1;
+        else return;
+        go(target);
+      });
+      function onKey(e) {
+        if (e.__odDeckKeyHandled) return;
+        var t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'VIDEO' || t.tagName === 'BUTTON' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+        if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+        if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.__odDeckKeyHandled = true; e.preventDefault(); go(idx + 1); }
+        else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.__odDeckKeyHandled = true; e.preventDefault(); go(idx - 1); }
+        else if (e.key === 'Home' || String(e.key).toLowerCase() === 'r') { e.__odDeckKeyHandled = true; e.preventDefault(); go(0); }
+        else if (e.key === 'End') { e.__odDeckKeyHandled = true; e.preventDefault(); go(slides.length - 1); }
+      }
+      // Capture phase + listen on both targets — inside the OD iframe,
+      // focus may be on window OR document; a single non-capture listener
+      // silently misses presses.
+      window.addEventListener('keydown', onKey, true);
+      document.addEventListener('keydown', onKey, true);
+      if (prev) prev.addEventListener('click', function () { go(idx - 1); });
+      if (next) next.addEventListener('click', function () { go(idx + 1); });
+      document.addEventListener('click', function (e) {
+        if (e.defaultPrevented) return;
+        if (e.button !== undefined && e.button !== 0) return;
+        if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+        var t = e.target;
+        while (t && t !== document.body && t !== document.documentElement) {
+          var tag = String(t.tagName || '').toUpperCase();
+          if (
+            tag === 'A' ||
+            tag === 'BUTTON' ||
+            tag === 'INPUT' ||
+            tag === 'VIDEO' ||
+            tag === 'TEXTAREA' ||
+            tag === 'SELECT' ||
+            t.isContentEditable ||
+            t.getAttribute('role') === 'button' ||
+            t.getAttribute('role') === 'link'
+          ) return;
+          t = t.parentElement;
+        }
+        focusDeck();
+        if (e.clientX < window.innerWidth / 2) go(idx - 1);
+        else go(idx + 1);
+      }, true);
+
+      // Auto-focus body so arrow keys work without an initial click.
+      document.body.setAttribute('tabindex', '-1');
+      document.body.style.outline = 'none';
+      function focusDeck() { try { window.focus(); document.body.focus({ preventScroll: true }); } catch (_) {} }
+      document.addEventListener('mousedown', function (e) {
+        if (!e.target.closest('button, input, video, a, select, textarea, [contenteditable]')) focusDeck();
+      });
+      window.addEventListener('load', focusDeck);
+
+      // Restore last position.
+      try {
+        var saved = parseInt(localStorage.getItem(STORE) || '0', 10);
+        if (!isNaN(saved) && saved >= 0 && saved < slides.length) idx = saved;
+      } catch (_) {}
+
+      window.addEventListener('resize', fit);
+      announceDeckProtocol();
+      fit();
+      paint();
+      focusDeck();
+    })();
+  </script>
+</body>
+</html>
